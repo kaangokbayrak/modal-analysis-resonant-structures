@@ -193,9 +193,11 @@ def print_summary(freq_analytical: np.ndarray, freq_fem: np.ndarray,
     print(f"   • SNR = 20 dB, Duration = 2.0 s, Sampling = 10 kHz")
     
     print("\n4. DESIGN OPTIMIZATION")
-    # Use a small tolerance for floating point comparison
-    initial_safe = "SAFE" if opt_results['initial_frequency'] >= 64.9 else "UNSAFE"
-    optimal_safe = "SAFE" if opt_results['optimal_frequency'] >= 64.9 else "UNSAFE"
+    # Use a small tolerance for floating point comparison (optimizer may find value slightly below target)
+    FREQUENCY_TOLERANCE = 0.1  # Hz
+    target_with_tolerance = opt_results['target_frequency'] - FREQUENCY_TOLERANCE
+    initial_safe = "SAFE" if opt_results['initial_frequency'] >= target_with_tolerance else "UNSAFE"
+    optimal_safe = "SAFE" if opt_results['optimal_frequency'] >= target_with_tolerance else "UNSAFE"
     print(f"   • Initial design: f₁ = {opt_results['initial_frequency']:.2f} Hz [{initial_safe}]")
     print(f"   • Optimal design: f₁ = {opt_results['optimal_frequency']:.2f} Hz [{optimal_safe}]")
     print(f"   • Successfully avoided 50 Hz pump resonance")
