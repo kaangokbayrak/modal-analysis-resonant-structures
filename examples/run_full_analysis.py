@@ -189,8 +189,8 @@ def print_summary(freq_analytical: np.ndarray, freq_fem: np.ndarray,
     
     print("\n3. SIGNAL PROCESSING")
     print(f"   • FFT successfully identified all {len(freq_fft)} modes from synthetic data")
-    print(f"   • Realistic damping ratios applied: [0.01, 0.02, 0.03, 0.04, 0.05]")
-    print(f"   • SNR = 20 dB, Duration = 2.0 s, Sampling = 10 kHz")
+    print(f"   • Realistic damping ratios applied: [0.005, 0.008, 0.010, 0.012, 0.015]")
+    print(f"   • SNR = 40 dB, Duration = 2.0 s, Sampling = 10 kHz")
     
     print("\n4. DESIGN OPTIMIZATION")
     # Use a small tolerance for floating point comparison (optimizer may find value slightly below target)
@@ -305,19 +305,20 @@ def main() -> None:
     
     print("Generating realistic vibration signal...")
     print("  • Using FEM frequencies as ground truth")
-    print("  • Damping ratios: [0.01, 0.02, 0.03, 0.04, 0.05] (1-5% of critical)")
+    print("  • Damping ratios: [0.005, 0.008, 0.010, 0.012, 0.015] (0.5-1.5% of critical)")
     print("  • Duration: 2.0 seconds")
     print("  • Sampling frequency: 10,000 Hz")
-    print("  • Signal-to-noise ratio: 20 dB")
+    print("  • Signal-to-noise ratio: 40 dB")
     
-    damping_ratios = np.array([0.01, 0.02, 0.03, 0.04, 0.05])
+    damping_ratios = np.array([0.005, 0.008, 0.010, 0.012, 0.015])
     
     signal_processor = SignalProcessor(fs=10000)
     signal_results = signal_processor.full_analysis(
         frequencies=freq_fem,
         damping_ratios=damping_ratios,
         duration=2.0,
-        snr_db=20.0
+        snr_db=40.0,
+        amplitudes=np.ones(5)
     )
     
     print("\n✓ Synthetic vibration signal generated")
@@ -446,7 +447,8 @@ def main() -> None:
         amplitudes=signal_results['amplitudes'],
         peak_freqs=freq_fft,
         theoretical_freqs=freq_analytical[:len(freq_fft)],
-        filename='fft_spectrum.png'
+        filename='fft_spectrum.png',
+        freq_range=(0, max(freq_analytical) * 1.5)
     )
     
     # 4. Mesh convergence
