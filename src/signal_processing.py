@@ -385,7 +385,8 @@ class SignalProcessor:
     def full_analysis(self, frequencies: np.ndarray,
                       damping_ratios: np.ndarray,
                       duration: float = 2.0,
-                      snr_db: float = 20.0) -> Dict:
+                      snr_db: float = 20.0,
+                      amplitudes: np.ndarray = None) -> Dict:
         """
         Run complete signal processing pipeline.
         
@@ -399,6 +400,8 @@ class SignalProcessor:
             Signal duration [s] (default: 2.0)
         snr_db : float, optional
             Signal-to-noise ratio [dB] (default: 20.0)
+        amplitudes : np.ndarray, optional
+            Mode amplitudes (default: decreasing with mode number)
             
         Returns
         -------
@@ -415,7 +418,7 @@ class SignalProcessor:
         """
         # Generate synthetic signal
         time, sig = self.generate_synthetic_vibration(
-            frequencies, damping_ratios, duration, snr_db
+            frequencies, damping_ratios, duration, snr_db, amplitudes
         )
         
         # Compute FFT

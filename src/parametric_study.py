@@ -231,16 +231,21 @@ class ParametricStudy:
         history = {'values': [], 'frequencies': [], 'masses': []}
         
         def objective(x):
-            """Objective function: minimize mass."""
+            """Objective function: minimize mass, and record full history."""
             # Create modified beam
             beam_copy = copy.deepcopy(self.base_beam)
             setattr(beam_copy, param, x[0])
             
             mass = beam_copy.total_mass
             
-            # Store history
+            # Compute frequency here to keep history arrays aligned
+            solver = AnalyticalSolver(beam_copy)
+            freq = solver.natural_frequencies(1, self.bc)[0]
+            
+            # Store history (all three arrays updated together)
             history['values'].append(x[0])
             history['masses'].append(mass)
+            history['frequencies'].append(freq)
             
             return mass
         
@@ -253,9 +258,6 @@ class ParametricStudy:
             # Compute first natural frequency
             solver = AnalyticalSolver(beam_copy)
             freq = solver.natural_frequencies(1, self.bc)[0]
-            
-            # Store history
-            history['frequencies'].append(freq)
             
             # Return constraint value (>= 0 is satisfied)
             return freq - target_freq
