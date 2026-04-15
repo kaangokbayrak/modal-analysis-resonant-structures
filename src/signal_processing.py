@@ -15,6 +15,9 @@ Author: Kaan Gokbayrak, Purdue University
 
 import numpy as np
 from scipy import signal
+from scipy.io import wavfile
+from scipy.optimize import curve_fit
+import logging
 from typing import Dict, Tuple
 
 
@@ -382,6 +385,314 @@ class SignalProcessor:
         
         return results
     
+    def compute_welch_psd(self, signal_data: np.ndarray, nperseg: int = None,
+                          noverlap: int = None,
+                          window: str = 'hanning') -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Compute Welch averaged power spectral density for better spectral estimates.
+
+        Parameters
+        ----------
+        signal_data : np.ndarray
+            Time-domain signal, shape (n_samples,)
+        nperseg : int, optional
+            Length of each segment. Defaults to min(len(signal_data) // 8, 1024).
+        noverlap : int, optional
+            Number of points to overlap between segments. Defaults to nperseg // 2.
+        window : str, optional
+            Window function (default: 'hanning')
+
+        Returns
+        -------
+        frequencies_hz : np.ndarray
+            Frequency array [Hz]
+        psd : np.ndarray
+            One-sided power spectral density
+        """
+        if nperseg is None:
+            nperseg = min(len(signal_data) // 8, 1024)
+        if noverlap is None:
+            noverlap = nperseg // 2
+        win = 'hann' if window == 'hanning' else window
+        frequencies_hz, psd = signal.welch(
+            signal_data, fs=self.fs, window=win,
+            nperseg=nperseg, noverlap=noverlap
+        )
+        return frequencies_hz, psd
+
+    def estimate_frf_h1(self, excitation: np.ndarray, response: np.ndarray,
+                        nperseg: int = None, noverlap: int = None,
+                        window: str = 'hanning') -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Estimate frequency response function using the H1 estimator.
+
+        H1(ω) = Gxy / Gxx, where Gxy is the cross-spectrum and Gxx is the
+        auto-spectrum of the excitation. H1 minimises noise on the response.
+
+        Parameters
+        ----------
+        excitation : np.ndarray
+            Excitation (input) signal, shape (n_samples,)
+        response : np.ndarray
+            Response (output) signal, shape (n_samples,)
+        nperseg : int, optional
+            Length of each segment. Defaults to min(len(excitation) // 8, 1024).
+        noverlap : int, optional
+            Number of points to overlap. Defaults to nperseg // 2.
+        window : str, optional
+            Window function (default: 'hanning')
+
+        Returns
+        -------
+        frequencies : np.ndarray
+            Frequency array [Hz]
+        H1_complex : np.ndarray
+            Complex H1 frequency response function
+        """
+        if nperseg is None:
+            nperseg = min(len(excitation) // 8, 1024)
+        if noverlap is None:
+            noverlap = nperseg // 2
+        win = 'hann' if window == 'hanning' else window
+        frequencies, Gxy = signal.csd(
+            excitation, response, fs=self.fs, window=win,
+            nperseg=nperseg, noverlap=noverlap
+        )
+        _, Gxx = signal.welch(
+            excitation, fs=self.fs, window=win,
+            nperseg=nperseg, noverlap=noverlap
+        )
+        H1_complex = Gxy / Gxx
+        return frequencies, H1_complex
+
+    def estimate_frf_h2(self, excitation: np.ndarray, response: np.ndarray,
+                        nperseg: int = None, noverlap: int = None,
+                        window: str = 'hanning') -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Estimate frequency response function using the H2 estimator.
+
+        H2(ω) = Gyy / Gyx, where Gyy is the auto-spectrum of the response and
+        Gyx is the cross-spectrum from response to excitation. H2 minimises
+        noise on the excitation.
+
+        Parameters
+        ----------
+        excitation : np.ndarray
+            Excitation (input) signal, shape (n_samples,)
+        response : np.ndarray
+            Response (output) signal, shape (n_samples,)
+        nperseg : int, optional
+            Length of each segment. Defaults to min(len(excitation) // 8, 1024).
+        noverlap : int, optional
+            Number of points to overlap. Defaults to nperseg // 2.
+        window : str, optional
+            Window function (default: 'hanning')
+
+        Returns
+        -------
+        frequencies : np.ndarray
+            Frequency array [Hz]
+        H2_complex : np.ndarray
+            Complex H2 frequency response function
+        """
+        if nperseg is None:
+            nperseg = min(len(excitation) // 8, 1024)
+        if noverlap is None:
+            noverlap = nperseg // 2
+        win = 'hann' if window == 'hanning' else window
+        frequencies, Gyx = signal.csd(
+            response, excitation, fs=self.fs, window=win,
+            nperseg=nperseg, noverlap=noverlap
+        )
+        _, Gyy = signal.welch(
+            response, fs=self.fs, window=win,
+            nperseg=nperseg, noverlap=noverlap
+        )
+        H2_complex = Gyy / Gyx
+        return frequencies, H2_complex
+
+    def coherence(self, excitation: np.ndarray, response: np.ndarray,
+                  nperseg: int = None, noverlap: int = None,
+                  window: str = 'hanning') -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Compute ordinary coherence function between excitation and response.
+
+        γ²(ω) = |Gxy|² / (Gxx * Gyy)
+
+        A coherence of 1 indicates a perfectly linear relationship; values below
+        1 indicate noise or nonlinearity.
+
+        Parameters
+        ----------
+        excitation : np.ndarray
+            Excitation (input) signal, shape (n_samples,)
+        response : np.ndarray
+            Response (output) signal, shape (n_samples,)
+        nperseg : int, optional
+            Length of each segment. Defaults to min(len(excitation) // 8, 1024).
+        noverlap : int, optional
+            Number of points to overlap. Defaults to nperseg // 2.
+        window : str, optional
+            Window function (default: 'hanning')
+
+        Returns
+        -------
+        frequencies : np.ndarray
+            Frequency array [Hz]
+        coherence_real : np.ndarray
+            Coherence values in [0, 1]
+        """
+        if nperseg is None:
+            nperseg = min(len(excitation) // 8, 1024)
+        if noverlap is None:
+            noverlap = nperseg // 2
+        win = 'hann' if window == 'hanning' else window
+        frequencies, Gxy = signal.csd(
+            excitation, response, fs=self.fs, window=win,
+            nperseg=nperseg, noverlap=noverlap
+        )
+        _, Gxx = signal.welch(
+            excitation, fs=self.fs, window=win,
+            nperseg=nperseg, noverlap=noverlap
+        )
+        _, Gyy = signal.welch(
+            response, fs=self.fs, window=win,
+            nperseg=nperseg, noverlap=noverlap
+        )
+        coherence_real = (np.abs(Gxy) ** 2) / (Gxx * Gyy)
+        return frequencies, coherence_real
+
+    def estimate_damping_sdof_fit(self, freqs: np.ndarray, amplitudes: np.ndarray,
+                                   peak_freq: float,
+                                   bandwidth_hz: float = 100.0) -> dict:
+        """
+        Estimate damping by curve-fitting the SDOF amplitude model to a spectral peak.
+
+        Fits |H(f)| = A / sqrt((fn**2 - f**2)**2 + (2*zeta*fn*f)**2) to the
+        measured spectrum within ±bandwidth_hz/2 of peak_freq using
+        scipy.optimize.curve_fit.
+
+        Parameters
+        ----------
+        freqs : np.ndarray
+            Frequency array [Hz]
+        amplitudes : np.ndarray
+            Amplitude spectrum values
+        peak_freq : float
+            Approximate natural frequency [Hz] to fit around
+        bandwidth_hz : float, optional
+            Total frequency window width for fitting [Hz] (default: 100.0)
+
+        Returns
+        -------
+        dict
+            - 'fn'        : fitted natural frequency [Hz]
+            - 'zeta'      : fitted damping ratio
+            - 'amplitude' : fitted amplitude coefficient
+            - 'residual'  : RMS fit residual
+            - 'success'   : True if curve_fit converged without RuntimeError
+        """
+        half_bw = bandwidth_hz / 2.0
+        mask = (freqs >= peak_freq - half_bw) & (freqs <= peak_freq + half_bw)
+        freqs_region = freqs[mask]
+        amplitudes_region = amplitudes[mask]
+
+        def sdof_model(f, fn, zeta, A):
+            return A / np.sqrt((fn ** 2 - f ** 2) ** 2 + (2 * zeta * fn * f) ** 2)
+
+        max_amp = float(np.max(amplitudes_region)) if len(amplitudes_region) > 0 else 1.0
+        p0 = [peak_freq, 0.02, max_amp]
+        bounds = ([0.5 * peak_freq, 0.0001, 0], [2 * peak_freq, 0.5, 1000 * max_amp])
+
+        try:
+            popt, _ = curve_fit(sdof_model, freqs_region, amplitudes_region,
+                                p0=p0, bounds=bounds, maxfev=10000)
+            fn_fit, zeta_fit, A_fit = popt
+            fitted = sdof_model(freqs_region, *popt)
+            residual = float(np.sqrt(np.mean((fitted - amplitudes_region) ** 2)))
+            return {
+                'fn': float(fn_fit),
+                'zeta': float(zeta_fit),
+                'amplitude': float(A_fit),
+                'residual': residual,
+                'success': True,
+            }
+        except RuntimeError as exc:
+            logging.warning("SDOF curve fit did not converge: %s", exc)
+            return {
+                'fn': peak_freq,
+                'zeta': 0.0,
+                'amplitude': max_amp,
+                'residual': float('inf'),
+                'success': False,
+            }
+
+    def load_from_csv(self, filepath: str, time_col: int = 0, signal_col: int = 1,
+                      delimiter: str = ',', skip_header: int = 1) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Load time-domain signal from a CSV file.
+
+        Reads two columns (time and signal) using np.loadtxt and updates the
+        sampling frequency from the median time step.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the CSV file
+        time_col : int, optional
+            Column index for time data (default: 0)
+        signal_col : int, optional
+            Column index for signal data (default: 1)
+        delimiter : str, optional
+            Column delimiter (default: ',')
+        skip_header : int, optional
+            Number of header rows to skip (default: 1)
+
+        Returns
+        -------
+        time : np.ndarray
+            Time array [s]
+        signal_data : np.ndarray
+            Signal values
+        """
+        data = np.loadtxt(filepath, delimiter=delimiter, skiprows=skip_header,
+                          usecols=(time_col, signal_col))
+        time = data[:, 0]
+        signal_data = data[:, 1]
+        self.fs = 1.0 / np.median(np.diff(time))
+        self.dt = 1.0 / self.fs
+        return time, signal_data
+
+    def load_from_wav(self, filepath: str) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Load time-domain signal from a WAV audio file.
+
+        Reads the file with scipy.io.wavfile, averages stereo channels to mono,
+        and normalises the signal to the range [-1, 1].
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the WAV file
+
+        Returns
+        -------
+        time : np.ndarray
+            Time array [s]
+        signal_normalized : np.ndarray
+            Normalised signal in [-1, 1]
+        """
+        sample_rate, data = wavfile.read(filepath)
+        self.fs = float(sample_rate)
+        self.dt = 1.0 / self.fs
+        data = data.astype(float)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        max_abs = np.max(np.abs(data))
+        signal_normalized = data / max_abs if max_abs > 0 else data
+        time = np.arange(len(signal_normalized)) * self.dt
+        return time, signal_normalized
+
     def full_analysis(self, frequencies: np.ndarray,
                       damping_ratios: np.ndarray,
                       duration: float = 2.0,
