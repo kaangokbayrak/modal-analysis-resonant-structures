@@ -7,8 +7,8 @@ These classes provide a clean, object-oriented interface for defining structural
 Author: Kaan Gokbayrak, Purdue University
 """
 
-from dataclasses import dataclass
-from typing import ClassVar
+from dataclasses import dataclass, field
+from typing import ClassVar, Optional, Union
 import numpy as np
 
 
@@ -97,10 +97,198 @@ class Material:
 
 
 @dataclass
+class RectangularSection:
+    """
+    Solid rectangular cross-section.
+
+    Attributes
+    ----------
+    width : float
+        Section width [m]
+    thickness : float
+        Section thickness (bending dimension) [m]
+    """
+    width: float
+    thickness: float
+
+    @property
+    def area(self) -> float:
+        """Cross-sectional area [m²]."""
+        return self.width * self.thickness
+
+    @property
+    def I(self) -> float:
+        """Second moment of area about the centroidal axis [m⁴]."""
+        return self.width * self.thickness**3 / 12
+
+
+@dataclass
+class IBeamSection:
+    """
+    I-beam (wide-flange) cross-section.
+
+    Attributes
+    ----------
+    flange_width : float
+        Width of each flange [m]
+    flange_thickness : float
+        Thickness of each flange [m]
+    web_height : float
+        Clear height of the web (between flanges) [m]
+    web_thickness : float
+        Thickness of the web [m]
+    """
+    flange_width: float
+    flange_thickness: float
+    web_height: float
+    web_thickness: float
+
+    @property
+    def area(self) -> float:
+        """Cross-sectional area [m²]."""
+        return 2 * self.flange_width * self.flange_thickness + self.web_height * self.web_thickness
+
+    @property
+    def I(self) -> float:
+        """Second moment of area about the centroidal axis [m⁴]."""
+        H = 2 * self.flange_thickness + self.web_height
+        return (self.flange_width * H**3 - (self.flange_width - self.web_thickness) * (H - 2 * self.flange_thickness)**3) / 12
+
+
+@dataclass
+class HollowRectSection:
+    """
+    Hollow rectangular (box) cross-section.
+
+    Attributes
+    ----------
+    outer_width : float
+        Outer width [m]
+    outer_thickness : float
+        Outer thickness [m]
+    inner_width : float
+        Inner (void) width [m]
+    inner_thickness : float
+        Inner (void) thickness [m]
+    """
+    outer_width: float
+    outer_thickness: float
+    inner_width: float
+    inner_thickness: float
+
+    @property
+    def area(self) -> float:
+        """Cross-sectional area [m²]."""
+        return self.outer_width * self.outer_thickness - self.inner_width * self.inner_thickness
+
+    @property
+    def I(self) -> float:
+        """Second moment of area about the centroidal axis [m⁴]."""
+        return (self.outer_width * self.outer_thickness**3 - self.inner_width * self.inner_thickness**3) / 12
+
+
+@dataclass
+class CircularSection:
+    """
+    Solid circular cross-section.
+
+    Attributes
+    ----------
+    radius : float
+        Radius of the circle [m]
+    """
+    radius: float
+
+    @property
+    def area(self) -> float:
+        """Cross-sectional area [m²]."""
+        return np.pi * self.radius**2
+
+    @property
+    def I(self) -> float:
+        """Second moment of area about the centroidal axis [m⁴]."""
+        return np.pi * self.radius**4 / 4
+
+
+@dataclass
+class HollowCircularSection:
+    """
+    Hollow circular (annular) cross-section.
+
+    Attributes
+    ----------
+    outer_radius : float
+        Outer radius [m]
+    inner_radius : float
+        Inner (void) radius [m]
+    """
+    outer_radius: float
+    inner_radius: float
+
+    @property
+    def area(self) -> float:
+        """Cross-sectional area [m²]."""
+        return np.pi * (self.outer_radius**2 - self.inner_radius**2)
+
+    @property
+    def I(self) -> float:
+        """Second moment of area about the centroidal axis [m⁴]."""
+        return np.pi * (self.outer_radius**4 - self.inner_radius**4) / 4
+
+
+@dataclass
+class TSection:
+    """
+    T-shaped cross-section (bending about the centroidal axis).
+
+    Attributes
+    ----------
+    flange_width : float
+        Width of the flange [m]
+    flange_thickness : float
+        Thickness of the flange [m]
+    web_height : float
+        Height of the web (below the flange) [m]
+    web_thickness : float
+        Thickness of the web [m]
+    """
+    flange_width: float
+    flange_thickness: float
+    web_height: float
+    web_thickness: float
+
+    @property
+    def area(self) -> float:
+        """Cross-sectional area [m²]."""
+        return self.flange_width * self.flange_thickness + self.web_height * self.web_thickness
+
+    @property
+    def I(self) -> float:
+        """Second moment of area about the centroidal axis [m⁴]."""
+        total_area = self.area
+        y_c = (
+            self.flange_width * self.flange_thickness * (self.web_height + self.flange_thickness / 2)
+            + self.web_height * self.web_thickness * (self.web_height / 2)
+        ) / total_area
+        I_flange = (
+            self.flange_width * self.flange_thickness**3 / 12
+            + self.flange_width * self.flange_thickness * (self.web_height + self.flange_thickness / 2 - y_c)**2
+        )
+        I_web = (
+            self.web_thickness * self.web_height**3 / 12
+            + self.web_thickness * self.web_height * (self.web_height / 2 - y_c)**2
+        )
+        return I_flange + I_web
+
+
+SectionType = Union[RectangularSection, IBeamSection, HollowRectSection, CircularSection, HollowCircularSection, TSection]
+
+
+@dataclass
 class Beam:
     """
-    Represents a rectangular cross-section beam with geometry and material properties.
-    
+    Represents a beam with geometry, material, and optional cross-section properties.
+
     Attributes
     ----------
     material : Material
@@ -111,47 +299,62 @@ class Beam:
         Beam width (in-plane dimension) [m]
     thickness : float
         Beam thickness (out-of-plane dimension, bending about neutral axis) [m]
+    section : SectionType, optional
+        Cross-section object. Defaults to ``RectangularSection(width, thickness)``
+        when not provided.
+    winkler_stiffness : float
+        Distributed elastic foundation stiffness (Winkler model) [N/m²]. Default 0.
     """
     material: Material
     length: float
     width: float
     thickness: float
+    section: Optional[SectionType] = field(default=None, repr=False)
+    winkler_stiffness: float = 0.0
     
     def __post_init__(self):
-        """Validate beam geometry."""
+        """Validate beam geometry and initialise default cross-section."""
         if self.length <= 0:
             raise ValueError(f"Length must be positive, got {self.length}")
         if self.width <= 0:
             raise ValueError(f"Width must be positive, got {self.width}")
         if self.thickness <= 0:
             raise ValueError(f"Thickness must be positive, got {self.thickness}")
+        if self.section is None:
+            self.section = RectangularSection(self.width, self.thickness)
+        if self.winkler_stiffness < 0:
+            raise ValueError(f"Winkler stiffness must be non-negative, got {self.winkler_stiffness}")
     
     @property
     def area(self) -> float:
         """
         Calculate cross-sectional area.
-        
+
         Returns
         -------
         float
             Cross-sectional area [m²]
         """
-        return self.width * self.thickness
-    
+        if isinstance(self.section, RectangularSection):
+            return self.width * self.thickness
+        return self.section.area
+
     @property
     def I(self) -> float:
         """
         Calculate second moment of area about the neutral axis.
-        
+
         For a rectangular cross-section bending about the centroidal axis parallel
         to the width, the second moment is I = (width * thickness³) / 12.
-        
+
         Returns
         -------
         float
             Second moment of area [m⁴]
         """
-        return (self.width * self.thickness**3) / 12.0
+        if isinstance(self.section, RectangularSection):
+            return (self.width * self.thickness**3) / 12.0
+        return self.section.I
     
     @property
     def mass_per_length(self) -> float:

@@ -42,7 +42,11 @@ class FEMSolver:
         'fixed-fixed', or 'fixed-pinned' (default: 'cantilever')
     """
     
-    def __init__(self, beam: Beam, n_elements: int = 50, bc: str = 'cantilever'):
+    def __init__(self, beam: Beam, n_elements: int = 50, bc: str = 'cantilever',
+                 formulation: str = 'euler-bernoulli',
+                 width_array: np.ndarray = None,
+                 thickness_array: np.ndarray = None,
+                 axial_force: float = 0.0):
         """
         Initialize FEM solver.
         
@@ -54,10 +58,22 @@ class FEMSolver:
             Number of finite elements
         bc : str
             Boundary condition identifier
+        formulation : str, optional
+            Beam formulation: 'euler-bernoulli' or 'timoshenko' (default: 'euler-bernoulli')
+        width_array : np.ndarray, optional
+            Per-element widths for tapered beams, length n_elements
+        thickness_array : np.ndarray, optional
+            Per-element thicknesses for tapered beams, length n_elements
+        axial_force : float, optional
+            Pre-stress axial force [N]; positive=tension, negative=compression (default: 0.0)
         """
         self.beam = beam
         self.n_elements = n_elements
         self.bc = bc
+        self.formulation = formulation
+        self.width_array = width_array
+        self.thickness_array = thickness_array
+        self.axial_force = axial_force
         
         # Derived quantities
         self.n_nodes = n_elements + 1
@@ -70,8 +86,40 @@ class FEMSolver:
         self.I = beam.I
         self.rho = beam.material.rho
         self.A = beam.area
+
+    def _get_element_props(self, elem: int) -> Tuple[float, float]:
+        """
+        Return (EI_e, rhoA_e) for element ``elem``.
+
+        If per-element width/thickness arrays were supplied the section
+        properties are recomputed for that element; otherwise the global
+        beam values are used.
+
+        Parameters
+        ----------
+        elem : int
+            Zero-based element index.
+
+        Returns
+        -------
+        EI_e : float
+            Bending stiffness for element [N·m²]
+        rhoA_e : float
+            Mass per unit length for element [kg/m]
+        """
+        if self.width_array is not None and self.thickness_array is not None:
+            b_e = self.width_array[elem]
+            h_e = self.thickness_array[elem]
+            A_e = b_e * h_e
+            I_e = b_e * h_e ** 3 / 12.0
+            EI_e = self.E * I_e
+            rhoA_e = self.rho * A_e
+        else:
+            EI_e = self.E * self.I
+            rhoA_e = self.rho * self.A
+        return EI_e, rhoA_e
         
-    def element_stiffness_matrix(self, Le: float) -> np.ndarray:
+    def element_stiffness_matrix(self, Le: float, EI: float = None) -> np.ndarray:
         """
         Construct 4×4 element stiffness matrix for Euler-Bernoulli beam element.
         
@@ -89,13 +137,16 @@ class FEMSolver:
         ----------
         Le : float
             Element length [m]
+        EI : float, optional
+            Bending stiffness [N·m²]; defaults to self.E * self.I
             
         Returns
         -------
         np.ndarray
             4×4 element stiffness matrix, shape (4, 4)
         """
-        EI = self.E * self.I
+        if EI is None:
+            EI = self.E * self.I
         Le2 = Le * Le
         Le3 = Le2 * Le
         
@@ -109,7 +160,7 @@ class FEMSolver:
         
         return k_e
     
-    def element_mass_matrix(self, Le: float) -> np.ndarray:
+    def element_mass_matrix(self, Le: float, rhoA: float = None) -> np.ndarray:
         """
         Construct 4×4 consistent mass matrix for Euler-Bernoulli beam element.
         
@@ -128,13 +179,17 @@ class FEMSolver:
         ----------
         Le : float
             Element length [m]
+        rhoA : float, optional
+            Mass per unit length [kg/m]; defaults to self.rho * self.A
             
         Returns
         -------
         np.ndarray
             4×4 element mass matrix, shape (4, 4)
         """
-        rho_A_Le = self.rho * self.A * Le
+        if rhoA is None:
+            rhoA = self.rho * self.A
+        rho_A_Le = rhoA * Le
         Le2 = Le * Le
         
         # Consistent mass matrix (symmetric)
@@ -146,6 +201,150 @@ class FEMSolver:
         ])
         
         return m_e
+
+    def element_timoshenko_stiffness_matrix(self, Le: float, EI: float,
+                                            GA_eff: float) -> np.ndarray:
+        """
+        Construct 4×4 Timoshenko beam element stiffness matrix.
+
+        Parameters
+        ----------
+        Le : float
+            Element length [m]
+        EI : float
+            Bending stiffness [N·m²]
+        GA_eff : float
+            Effective shear stiffness kappa*G*A [N]
+
+        Returns
+        -------
+        np.ndarray
+            4×4 Timoshenko stiffness matrix, shape (4, 4)
+        """
+        Phi = 12.0 * EI / (GA_eff * Le ** 2)
+        Le2 = Le * Le
+        Le3 = Le2 * Le
+        c = EI / (Le3 * (1.0 + Phi))
+
+        k_t = c * np.array([
+            [ 12,                  6*Le,              -12,                  6*Le              ],
+            [ 6*Le,    (4 + Phi)*Le2,     -6*Le,     (2 - Phi)*Le2    ],
+            [-12,                 -6*Le,               12,                 -6*Le              ],
+            [ 6*Le,    (2 - Phi)*Le2,     -6*Le,     (4 + Phi)*Le2    ],
+        ])
+        return k_t
+
+    def element_timoshenko_mass_matrix(self, Le: float, EI: float, rhoA: float,
+                                       rhoI: float, GA_eff: float) -> np.ndarray:
+        """
+        Construct 4×4 Timoshenko beam element consistent mass matrix including
+        rotary inertia.
+
+        Parameters
+        ----------
+        Le : float
+            Element length [m]
+        EI : float
+            Bending stiffness [N·m²]
+        rhoA : float
+            Mass per unit length [kg/m]
+        rhoI : float
+            Rotary inertia per unit length rho*I [kg·m]
+        GA_eff : float
+            Effective shear stiffness kappa*G*A [N]
+
+        Returns
+        -------
+        np.ndarray
+            4×4 Timoshenko mass matrix, shape (4, 4)
+        """
+        Phi = 12.0 * EI / (GA_eff * Le ** 2)
+        Le2 = Le * Le
+
+        factor_t = rhoA * Le / (420.0 * (1.0 + Phi) ** 2)
+        factor_r = rhoI / (30.0 * Le * (1.0 + Phi) ** 2)
+
+        trans = np.array([
+            [156 + 294*Phi + 140*Phi**2,
+             (22 + 77*Phi + 35*Phi**2)*Le,
+             54 + 126*Phi + 70*Phi**2,
+             -(13 + 42*Phi + 35*Phi**2)*Le],
+            [(22 + 77*Phi + 35*Phi**2)*Le,
+             (4 + 14*Phi + 10.5*Phi**2)*Le2,
+             (13 + 42*Phi + 35*Phi**2)*Le,
+             -(3 + 10.5*Phi + 8.75*Phi**2)*Le2],
+            [54 + 126*Phi + 70*Phi**2,
+             (13 + 42*Phi + 35*Phi**2)*Le,
+             156 + 294*Phi + 140*Phi**2,
+             -(22 + 77*Phi + 35*Phi**2)*Le],
+            [-(13 + 42*Phi + 35*Phi**2)*Le,
+             -(3 + 10.5*Phi + 8.75*Phi**2)*Le2,
+             -(22 + 77*Phi + 35*Phi**2)*Le,
+             (4 + 14*Phi + 10.5*Phi**2)*Le2],
+        ])
+
+        rotat = np.array([
+            [ 36,                          (3 - 15*Phi)*Le,
+             -36,                          (3 - 15*Phi)*Le],
+            [(3 - 15*Phi)*Le,              (4 + 5*Phi - 5*Phi**2)*Le2,
+             -(3 - 15*Phi)*Le,             (-1 - 5*Phi + 2.5*Phi**2)*Le2],
+            [-36,                         -(3 - 15*Phi)*Le,
+              36,                         -(3 - 15*Phi)*Le],
+            [(3 - 15*Phi)*Le,              (-1 - 5*Phi + 2.5*Phi**2)*Le2,
+             -(3 - 15*Phi)*Le,             (4 + 5*Phi - 5*Phi**2)*Le2],
+        ])
+
+        return factor_t * trans + factor_r * rotat
+
+    def element_geometric_stiffness_matrix(self, Le: float, N: float) -> np.ndarray:
+        """
+        Construct 4×4 geometric stiffness matrix accounting for pre-stress.
+
+        Parameters
+        ----------
+        Le : float
+            Element length [m]
+        N : float
+            Axial force [N]; positive = tension, negative = compression
+
+        Returns
+        -------
+        np.ndarray
+            4×4 geometric stiffness matrix, shape (4, 4)
+        """
+        Le2 = Le * Le
+        k_g = (N / (30.0 * Le)) * np.array([
+            [ 36,      3*Le,    -36,      3*Le  ],
+            [ 3*Le,    4*Le2,   -3*Le,   -Le2   ],
+            [-36,     -3*Le,     36,     -3*Le  ],
+            [ 3*Le,   -Le2,     -3*Le,    4*Le2 ],
+        ])
+        return k_g
+
+    def element_winkler_stiffness_matrix(self, Le: float, kw: float) -> np.ndarray:
+        """
+        Construct 4×4 Winkler foundation stiffness matrix.
+
+        Parameters
+        ----------
+        Le : float
+            Element length [m]
+        kw : float
+            Winkler foundation stiffness [N/m²]
+
+        Returns
+        -------
+        np.ndarray
+            4×4 Winkler stiffness matrix, shape (4, 4)
+        """
+        Le2 = Le * Le
+        k_w = (kw * Le / 420.0) * np.array([
+            [ 156,      22*Le,    54,     -13*Le  ],
+            [ 22*Le,    4*Le2,    13*Le,   -3*Le2 ],
+            [ 54,       13*Le,   156,     -22*Le  ],
+            [-13*Le,   -3*Le2,   -22*Le,    4*Le2 ],
+        ])
+        return k_w
     
     def assemble_global_matrices(self) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -171,33 +370,51 @@ class FEMSolver:
         # Initialize global matrices
         K = np.zeros((self.total_dofs, self.total_dofs))
         M = np.zeros((self.total_dofs, self.total_dofs))
-        
-        # Get element matrices (same for all elements since uniform beam)
-        k_e = self.element_stiffness_matrix(self.element_length)
-        m_e = self.element_mass_matrix(self.element_length)
-        
+
+        Le = self.element_length
+        winkler_stiffness = getattr(self.beam, 'winkler_stiffness', 0.0)
+
+        # Pre-compute Timoshenko shared quantities once (if applicable)
+        if self.formulation == 'timoshenko':
+            nu = getattr(self.beam.material, 'nu', 0.3)
+            G = self.E / (2.0 * (1.0 + nu))
+            kappa = 5.0 / 6.0
+
         # Assemble element by element
         for elem in range(self.n_elements):
-            # Node numbers for this element (0-indexed)
             node1 = elem
             node2 = elem + 1
-            
-            # Global DOF indices for this element
-            # Each node has 2 DOFs: [w, θ]
+
             dof_indices = np.array([
-                2*node1,      # w at node 1
-                2*node1 + 1,  # θ at node 1
-                2*node2,      # w at node 2
-                2*node2 + 1   # θ at node 2
+                2*node1,
+                2*node1 + 1,
+                2*node2,
+                2*node2 + 1,
             ])
-            
-            # Add element matrices to global matrices
-            # This is the assembly process: K_global[i,j] += k_element[local_i, local_j]
-            for i in range(4):
-                for j in range(4):
-                    K[dof_indices[i], dof_indices[j]] += k_e[i, j]
-                    M[dof_indices[i], dof_indices[j]] += m_e[i, j]
-        
+
+            EI_e, rhoA_e = self._get_element_props(elem)
+
+            if self.formulation == 'timoshenko':
+                # Recover cross-section area from rhoA_e
+                A_e = rhoA_e / self.rho
+                GA_eff = kappa * G * A_e
+                k_e = self.element_timoshenko_stiffness_matrix(Le, EI_e, GA_eff)
+                # Rotary inertia per unit length: rho * I_e  (I_e = EI_e / E)
+                rhoI_e = self.rho * (EI_e / self.E)
+                m_e = self.element_timoshenko_mass_matrix(Le, EI_e, rhoA_e, rhoI_e, GA_eff)
+            else:
+                k_e = self.element_stiffness_matrix(Le, EI_e)
+                m_e = self.element_mass_matrix(Le, rhoA_e)
+
+            if self.axial_force != 0.0:
+                k_e = k_e + self.element_geometric_stiffness_matrix(Le, self.axial_force)
+
+            if winkler_stiffness > 0.0:
+                k_e = k_e + self.element_winkler_stiffness_matrix(Le, winkler_stiffness)
+
+            K[np.ix_(dof_indices, dof_indices)] += k_e
+            M[np.ix_(dof_indices, dof_indices)] += m_e
+
         return K, M
     
     def apply_boundary_conditions(self, K: np.ndarray, 
@@ -327,7 +544,8 @@ class FEMSolver:
             'mode_shapes': mode_shapes_full,
             'n_elements': self.n_elements,
             'bc': self.bc,
-            'element_length': self.element_length
+            'element_length': self.element_length,
+            'formulation': self.formulation,
         }
     
     def mesh_convergence_study(self, element_counts: List[int] = None,
@@ -370,8 +588,10 @@ class FEMSolver:
         
         # Test each mesh density
         for n_elem in element_counts:
-            # Create solver with this mesh
-            solver = FEMSolver(self.beam, n_elements=n_elem, bc=self.bc)
+            # Create solver with this mesh, propagating key solver settings
+            solver = FEMSolver(self.beam, n_elements=n_elem, bc=self.bc,
+                               formulation=self.formulation,
+                               axial_force=self.axial_force)
             
             # Solve
             results = solver.solve(n_modes)
