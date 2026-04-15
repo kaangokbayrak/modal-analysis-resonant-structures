@@ -599,8 +599,7 @@ def main() -> None:
 
     # 13. MAC matrix (new)
     print("  [13/16] MAC matrix...")
-    from src.modal_analysis import ModalAnalyzer as _MA
-    _ma_analytical = _MA(
+    _ma_analytical = ModalAnalyzer(
         frequencies_hz=freq_analytical,
         mode_shapes=mode_shapes_analytical_fem
     )

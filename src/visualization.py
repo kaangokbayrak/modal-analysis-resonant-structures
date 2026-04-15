@@ -675,11 +675,11 @@ class Visualizer:
         ax.axvline(f2, color='orange', linestyle=':', linewidth=2, alpha=0.7)
         
         # Add annotations
-        ax.annotate(f'f0 = {f1:.2f} Hz', xy=(f1, half_power_amp),
+        ax.annotate(f'f1 = {f1:.2f} Hz', xy=(f1, half_power_amp),
                    xytext=(f1 - 5, half_power_amp * 1.2),
                    fontsize=10, ha='right',
                    arrowprops=dict(arrowstyle='->', color='orange'))
-        ax.annotate(f'f₂ = {f2:.2f} Hz', xy=(f2, half_power_amp),
+        ax.annotate(f'f2 = {f2:.2f} Hz', xy=(f2, half_power_amp),
                    xytext=(f2 + 5, half_power_amp * 1.2),
                    fontsize=10, ha='left',
                    arrowprops=dict(arrowstyle='->', color='orange'))
