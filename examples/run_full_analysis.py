@@ -33,8 +33,9 @@ sys.path.insert(0, str(project_root))
 
 # Import from src package
 from src import (
-    Beam, Material, AnalyticalSolver, FEMSolver, 
-    SignalProcessor, ParametricStudy, Visualizer
+    Beam, Material, AnalyticalSolver, FEMSolver,
+    SignalProcessor, ParametricStudy, Visualizer,
+    ModalAnalyzer, from_fem_results
 )
 
 
@@ -411,16 +412,55 @@ def main() -> None:
     print_optimization_results(opt_results)
     
     # ========================================================================
-    # STEP 10: Generate all visualizations
+    # STEP 10: MODAL ANALYSIS POST-PROCESSING (FRF, MAC, Impulse Response)
     # ========================================================================
-    print_section_header("STEP 10: GENERATING VISUALIZATIONS")
-    
+    print_section_header("STEP 10: MODAL POST-PROCESSING")
+
+    print("Building ModalAnalyzer from FEM results...")
+    modal_analyzer = from_fem_results(
+        fem_results,
+        damping_ratios=damping_ratios
+    )
+
+    # Frequency response function (FRF)
+    print("  • Computing FRF (tip excitation, tip response)...")
+    tip_dof = fem_results['mode_shapes'].shape[0] - 2  # last translational DOF
+    omega_range = np.linspace(1, 2 * np.pi * max(freq_analytical) * 1.5, 8000)
+    _, H_complex = modal_analyzer.compute_frf(
+        omega_range=omega_range,
+        dof_out=tip_dof,
+        dof_in=tip_dof
+    )
+
+    # MAC matrix (FEM vs analytical)
+    print("  • Computing MAC matrix (FEM vs analytical mode shapes)...")
+    x_fem = np.linspace(0, beam.length, fem_solver.n_elements + 1)
+    mode_shapes_analytical_fem = analytical_solver.mode_shapes(
+        x_fem, n_modes=5, bc='cantilever'
+    )
+
+    # Impulse response
+    print("  • Computing impulse response (first 0.5 s)...")
+    t_ir = np.linspace(0, 0.5, 5000)
+    h_ir = modal_analyzer.impulse_response(
+        t=t_ir,
+        dof_out=tip_dof,
+        dof_in=tip_dof
+    )
+
+    print("\n✓ Modal post-processing complete")
+
+    # ========================================================================
+    # STEP 11: GENERATING VISUALIZATIONS
+    # ========================================================================
+    print_section_header("STEP 11: GENERATING VISUALIZATIONS")
+
     viz = Visualizer(save_dir=str(figures_dir))
-    
+
     print("Creating figures...")
-    
-    # 1. Mode shapes
-    print("  [1/11] Mode shapes plot...")
+
+    # 1. Mode shapes (enhanced)
+    print("  [ 1/16] Mode shapes plot...")
     viz.plot_mode_shapes(
         x=x,
         mode_shapes=mode_shapes_analytical,
@@ -429,9 +469,9 @@ def main() -> None:
         length=beam.length,
         filename='mode_shapes.png'
     )
-    
+
     # 2. Animated mode shapes
-    print("  [2/11] Animated mode shapes (first 3 modes)...")
+    print("  [ 2/16] Animated mode shapes (first 3 modes)...")
     viz.animate_mode_shapes(
         x=x,
         mode_shapes=mode_shapes_analytical[:, :3],
@@ -439,9 +479,9 @@ def main() -> None:
         length=beam.length,
         filename='mode_animation.gif'
     )
-    
+
     # 3. FFT spectrum
-    print("  [3/11] FFT spectrum with peaks...")
+    print("  [ 3/16] FFT spectrum with peaks...")
     viz.plot_fft_spectrum(
         frequencies=signal_results['frequencies'],
         amplitudes=signal_results['amplitudes'],
@@ -450,17 +490,17 @@ def main() -> None:
         filename='fft_spectrum.png',
         freq_range=(0, max(freq_analytical) * 1.5)
     )
-    
+
     # 4. Mesh convergence
-    print("  [4/11] Mesh convergence plot...")
+    print("  [ 4/16] Mesh convergence plot...")
     viz.plot_mesh_convergence(
         n_elements=np.array(convergence_results['element_counts']),
         errors=convergence_results['errors'],
         filename='mesh_convergence.png'
     )
-    
+
     # 5. Frequency comparison bar chart
-    print("  [5/11] Frequency comparison bar chart...")
+    print("  [ 5/16] Frequency comparison bar chart...")
     viz.plot_frequency_comparison(
         frequencies_dict={
             'Analytical': freq_analytical,
@@ -469,42 +509,43 @@ def main() -> None:
         },
         filename='frequency_comparison.png'
     )
-    
-    # 6. Thickness sweep
-    print("  [6/11] Thickness parametric sweep...")
+
+    # 6. Thickness sweep (with hazard zone)
+    print("  [ 6/16] Thickness parametric sweep...")
     viz.plot_parametric_sweep(
-        parameter_values=thickness_sweep['values'] * 1000,  # Convert to mm
+        parameter_values=thickness_sweep['values'] * 1000,
         frequencies=thickness_sweep['frequencies'],
         parameter_name='Thickness',
         parameter_unit='mm',
+        hazard_range=(50.0, 70.0),
         filename='parametric_thickness.png'
     )
-    
-    # 7. Length sweep
-    print("  [7/11] Length parametric sweep...")
+
+    # 7. Length sweep (with hazard zone)
+    print("  [ 7/16] Length parametric sweep...")
     viz.plot_parametric_sweep(
-        parameter_values=length_sweep['values'] * 1000,  # Convert to mm
+        parameter_values=length_sweep['values'] * 1000,
         frequencies=length_sweep['frequencies'],
         parameter_name='Length',
         parameter_unit='mm',
+        hazard_range=(50.0, 70.0),
         filename='parametric_length.png'
     )
-    
+
     # 8. Design space map
-    print("  [8/11] Design space 2D map...")
+    print("  [ 8/16] Design space 2D map...")
     viz.plot_design_space(
-        param1_values=design_space['values1'] * 1000,  # Convert to mm
-        param2_values=design_space['values2'] * 1000,  # Convert to mm
+        param1_values=design_space['values1'] * 1000,
+        param2_values=design_space['values2'] * 1000,
         frequency_map=design_space['frequency_map'],
         param1_name='Thickness (mm)',
         param2_name='Length (mm)',
-        safe_region=(50.0, 70.0),  # Unsafe region: 50-70 Hz
+        safe_region=(50.0, 70.0),
         filename='design_space_map.png'
     )
-    
+
     # 9. Validation table
-    print("  [9/11] Validation comparison table...")
-    # Prepare data for validation table
+    print("  [ 9/16] Validation comparison table...")
     n_compare = min(len(freq_analytical), len(freq_fem), len(freq_fft))
     validation_data = {}
     for i in range(n_compare):
@@ -512,70 +553,135 @@ def main() -> None:
         error_fem = 100 * abs(freq_fem[i] - freq_analytical[i]) / freq_analytical[i]
         error_fft = 100 * abs(freq_fft[i] - freq_analytical[i]) / freq_analytical[i]
         validation_data[mode_label] = [
-            freq_analytical[i], 
-            freq_fem[i], 
+            freq_analytical[i],
+            freq_fem[i],
             freq_fft[i],
             error_fem,
             error_fft
         ]
-    
+
     viz.plot_validation_table(
         data=validation_data,
         column_labels=['Analytical (Hz)', 'FEM (Hz)', 'FFT (Hz)', 'FEM Err (%)', 'FFT Err (%)'],
         title='Three-Way Validation: Analytical vs FEM vs FFT',
         filename='validation_table.png'
     )
-    
-    # 10. Time signal
-    print(" [10/11] Time-domain signal...")
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(signal_results['time'][:1000], signal_results['signal'][:1000], 'b-', linewidth=0.8)
-    ax.set_xlabel('Time (s)')
-    ax.set_ylabel('Amplitude')
-    ax.set_title('Synthetic Vibration Signal (First 0.1 seconds)')
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(figures_dir / 'time_signal.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    # 11. Optimization history
-    print(" [11/11] Optimization convergence...")
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-    
-    # Use the minimum length to avoid mismatch
-    n_iters = min(len(opt_results['history']['frequencies']), 
-                   len(opt_results['history']['masses']))
-    iterations = range(1, n_iters + 1)
-    
-    ax1.plot(iterations, opt_results['history']['frequencies'][:n_iters], 'b-o', markersize=4)
-    ax1.axhline(y=opt_results['target_frequency'], color='r', linestyle='--', 
-                label=f"Target: {opt_results['target_frequency']} Hz")
-    ax1.set_xlabel('Iteration')
-    ax1.set_ylabel('First Natural Frequency (Hz)')
-    ax1.set_title('Optimization Convergence: Frequency')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    
-    ax2.plot(iterations, np.array(opt_results['history']['masses'][:n_iters]) * 1000, 'g-o', markersize=4)
-    ax2.set_xlabel('Iteration')
-    ax2.set_ylabel('Mass (g)')
-    ax2.set_title('Optimization Convergence: Mass')
-    ax2.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(figures_dir / 'optimization_convergence.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
+
+    # 10. Time-domain signal (polished)
+    print("  [10/16] Time-domain signal...")
+    viz.plot_time_signal(
+        time=signal_results['time'],
+        signal_data=signal_results['signal'],
+        n_show_samples=1000,
+        filename='time_signal.png'
+    )
+
+    # 11. Optimization convergence (polished)
+    print("  [11/16] Optimization convergence...")
+    viz.plot_optimization_history(
+        frequencies=opt_results['history']['frequencies'],
+        masses=opt_results['history']['masses'],
+        target_frequency=opt_results['target_frequency'],
+        parameter_name=opt_results['parameter'],
+        filename='optimization_convergence.png'
+    )
+
+    # 12. FRF plot (new)
+    print("  [12/16] FRF magnitude + phase...")
+    H_mag_db = 20 * np.log10(np.abs(H_complex) + 1e-30)
+    viz.plot_frf(
+        omega=omega_range,
+        H=H_complex,
+        frequencies_hz=freq_analytical,
+        title='FRF — Tip Excitation / Tip Response',
+        filename='frf_plot.png'
+    )
+
+    # 13. MAC matrix (new)
+    print("  [13/16] MAC matrix...")
+    from src.modal_analysis import ModalAnalyzer as _MA
+    _ma_analytical = _MA(
+        frequencies_hz=freq_analytical,
+        mode_shapes=mode_shapes_analytical_fem
+    )
+    mac_matrix = _ma_analytical.compute_mac_matrix(fem_results['mode_shapes'])
+    n_mac = min(5, mac_matrix.shape[0], mac_matrix.shape[1])
+    viz.plot_mac_matrix(
+        mac=mac_matrix[:n_mac, :n_mac],
+        row_labels=[f'A{i+1}' for i in range(n_mac)],
+        col_labels=[f'FEM{i+1}' for i in range(n_mac)],
+        title='MAC Matrix: Analytical vs FEM Mode Shapes',
+        filename='mac_matrix.png'
+    )
+
+    # 14. Impulse response (new)
+    print("  [14/16] Impulse response function...")
+    viz.plot_impulse_response(
+        t=t_ir,
+        h=h_ir,
+        frequencies_hz=freq_fem[:3],
+        filename='impulse_response.png'
+    )
+
+    # 15. Summary dashboard (new)
+    print("  [15/16] Summary dashboard...")
+    viz.plot_summary_dashboard(
+        x=x,
+        mode_shapes=mode_shapes_analytical,
+        frequencies_analytical=freq_analytical,
+        freq_hz=omega_range / (2 * np.pi),
+        H_mag_db=H_mag_db,
+        fft_frequencies=signal_results['frequencies'],
+        fft_amplitudes=signal_results['amplitudes'],
+        peak_freqs=freq_fft,
+        n_elements=np.array(convergence_results['element_counts']),
+        errors=convergence_results['errors'],
+        param1_values=design_space['values1'] * 1000,
+        param2_values=design_space['values2'] * 1000,
+        frequency_map=design_space['frequency_map'],
+        hazard_range=(50.0, 70.0),
+        length=beam.length,
+        filename='summary_dashboard.png'
+    )
+
+    # 16. Damping estimation plot
+    print("  [16/16] Damping estimation illustration...")
+    f1 = freq_analytical[0]
+    fft_freqs_all = signal_results['frequencies']
+    fft_amps_all = signal_results['amplitudes']
+    mask_bw = (fft_freqs_all >= f1 * 0.5) & (fft_freqs_all <= f1 * 1.8)
+    if np.any(mask_bw):
+        fft_f_zoom = fft_freqs_all[mask_bw]
+        fft_a_zoom = fft_amps_all[mask_bw]
+        peak_idx = int(np.argmax(fft_a_zoom))
+        peak_f = fft_f_zoom[peak_idx]
+        half_power = fft_a_zoom[peak_idx] / np.sqrt(2)
+        above_half = fft_a_zoom >= half_power
+        left_indices = np.where(above_half[:peak_idx + 1])[0]
+        right_indices = np.where(above_half[peak_idx:])[0]
+        if len(left_indices) > 0 and len(right_indices) > 0:
+            f_low_bw = fft_f_zoom[left_indices[0]]
+            f_high_bw = fft_f_zoom[peak_idx + right_indices[-1]]
+            zeta_est = (f_high_bw - f_low_bw) / (2 * peak_f)
+            viz.plot_damping_estimation(
+                frequencies=fft_f_zoom,
+                amplitudes=fft_a_zoom,
+                peak_freq=peak_f,
+                damping_ratio=zeta_est,
+                bandwidth=(f_low_bw, f_high_bw),
+                filename='damping_estimation.png'
+            )
+
     print("\n✓ All visualizations generated successfully!")
     print(f"  • Saved to: {figures_dir}")
-    
+
     # ========================================================================
-    # STEP 11: Print comprehensive summary
+    # FINAL SUMMARY
     # ========================================================================
     print_section_header("FINAL SUMMARY")
-    
+
     print_summary(freq_analytical, freq_fem, freq_fft, opt_results)
-    
+
     print("\n" + "╔" + "═" * 78 + "╗")
     print("║" + " " * 78 + "║")
     print("║" + "  ANALYSIS COMPLETE - ALL OBJECTIVES ACHIEVED  ".center(78) + "║")
