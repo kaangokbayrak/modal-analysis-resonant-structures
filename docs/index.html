@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Modal Analysis of Resonant Structures</title>
+  <style>
+    :root {
+      --accent: #0d6efd;
+      --bg: #f8f9fa;
+      --card-bg: #ffffff;
+      --text: #212529;
+      --muted: #6c757d;
+      --border: #dee2e6;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      color: #fff;
+      padding: 3rem 1rem 2rem;
+      text-align: center;
+    }
+
+    header h1 {
+      font-size: 2.2rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 0.5rem;
+    }
+
+    header p.subtitle {
+      font-size: 1.05rem;
+      color: #adb5bd;
+      max-width: 700px;
+      margin: 0 auto 1.5rem;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    .badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: #e9ecef;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem 1rem 4rem;
+    }
+
+    section { margin-bottom: 3rem; }
+
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      border-bottom: 2px solid var(--accent);
+      padding-bottom: 0.4rem;
+      margin-bottom: 1.5rem;
+      color: var(--text);
+    }
+
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+    }
+
+    .feature-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+
+    .feature-card .icon {
+      font-size: 1.6rem;
+      flex-shrink: 0;
+    }
+
+    .feature-card strong { display: block; margin-bottom: 0.2rem; }
+
+    .feature-card p { font-size: 0.85rem; color: var(--muted); }
+
+    .figures-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .figure-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.07);
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .figure-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 6px 16px rgba(0,0,0,0.12);
+    }
+
+    .figure-card img {
+      width: 100%;
+      display: block;
+      border-bottom: 1px solid var(--border);
+      background: #fff;
+    }
+
+    .figure-caption {
+      padding: 0.85rem 1rem;
+    }
+
+    .figure-caption strong {
+      display: block;
+      font-size: 0.95rem;
+      margin-bottom: 0.2rem;
+    }
+
+    .figure-caption p {
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    .workflow-steps {
+      counter-reset: step;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .workflow-steps li {
+      counter-increment: step;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.9rem 1.25rem;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+
+    .workflow-steps li::before {
+      content: counter(step);
+      background: var(--accent);
+      color: #fff;
+      width: 1.8rem;
+      height: 1.8rem;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+
+    footer {
+      text-align: center;
+      padding: 2rem 1rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+    }
+
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    @media (max-width: 600px) {
+      header h1 { font-size: 1.6rem; }
+      .figures-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Modal Analysis of Resonant Structures</h1>
+  <p class="subtitle">
+    Computational modal analysis tool for resonant structures &mdash;
+    Euler-Bernoulli FEM solver, FFT-based vibration analysis, and parametric
+    optimization in Python.
+  </p>
+  <div class="badges">
+    <span class="badge">Python 3.8+</span>
+    <span class="badge">NumPy · SciPy</span>
+    <span class="badge">Matplotlib · Seaborn</span>
+    <span class="badge">Euler-Bernoulli FEM</span>
+    <span class="badge">FFT Signal Processing</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Overview -->
+  <section>
+    <h2>Project Overview</h2>
+    <div class="overview-grid">
+      <div class="feature-card">
+        <span class="icon">📐</span>
+        <div>
+          <strong>Analytical Solution</strong>
+          <p>Euler-Bernoulli beam theory for exact natural frequency computation.</p>
+        </div>
+      </div>
+      <div class="feature-card">
+        <span class="icon">🔢</span>
+        <div>
+          <strong>FEM Solver</strong>
+          <p>From-scratch finite element implementation with configurable mesh density.</p>
+        </div>
+      </div>
+      <div class="feature-card">
+        <span class="icon">📡</span>
+        <div>
+          <strong>FFT Analysis</strong>
+          <p>Synthetic vibration signal generation and frequency-domain identification.</p>
+        </div>
+      </div>
+      <div class="feature-card">
+        <span class="icon">✅</span>
+        <div>
+          <strong>Three-Way Validation</strong>
+          <p>Cross-validation between Analytical, FEM, and FFT results.</p>
+        </div>
+      </div>
+      <div class="feature-card">
+        <span class="icon">📊</span>
+        <div>
+          <strong>Parametric Studies</strong>
+          <p>Thickness and length sweeps to map the structural design space.</p>
+        </div>
+      </div>
+      <div class="feature-card">
+        <span class="icon">⚙️</span>
+        <div>
+          <strong>Optimization</strong>
+          <p>Minimize mass while keeping the first mode above a target frequency.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Analysis Workflow -->
+  <section>
+    <h2>Analysis Workflow</h2>
+    <ol class="workflow-steps">
+      <li>Define beam geometry and steel material properties.</li>
+      <li>Compute analytical natural frequencies using Euler-Bernoulli theory.</li>
+      <li>Assemble global stiffness and mass matrices via FEM; solve eigenvalue problem.</li>
+      <li>Synthesize a time-domain vibration signal and extract frequencies via FFT.</li>
+      <li>Validate all three methods against each other.</li>
+      <li>Run mesh convergence study to confirm FEM accuracy.</li>
+      <li>Perform parametric sweeps over thickness and length.</li>
+      <li>Optimize beam geometry to avoid resonance with a 50 Hz pump.</li>
+    </ol>
+  </section>
+
+  <!-- Results -->
+  <section>
+    <h2>Analysis Results</h2>
+    <div class="figures-grid">
+
+      <div class="figure-card">
+        <img src="figures/mode_shapes.png" alt="Mode Shapes" loading="lazy" />
+        <div class="figure-caption">
+          <strong>Mode Shapes</strong>
+          <p>First four bending mode shapes of the cantilever beam overlaid on the beam geometry.</p>
+        </div>
+      </div>
+
+      <div class="figure-card">
+        <img src="figures/fft_spectrum.png" alt="FFT Spectrum" loading="lazy" />
+        <div class="figure-caption">
+          <strong>FFT Spectrum</strong>
+          <p>Frequency-domain spectrum extracted from a synthetic vibration signal via FFT.</p>
+        </div>
+      </div>
+
+      <div class="figure-card">
+        <img src="figures/frequency_comparison.png" alt="Frequency Comparison" loading="lazy" />
+        <div class="figure-caption">
+          <strong>Three-Way Validation</strong>
+          <p>Side-by-side comparison of Analytical, FEM, and FFT natural frequencies.</p>
+        </div>
+      </div>
+
+      <div class="figure-card">
+        <img src="figures/mesh_convergence.png" alt="Mesh Convergence" loading="lazy" />
+        <div class="figure-caption">
+          <strong>Mesh Convergence</strong>
+          <p>FEM frequency convergence as a function of element count.</p>
+        </div>
+      </div>
+
+      <div class="figure-card">
+        <img src="figures/parametric_thickness.png" alt="Parametric Thickness Study" loading="lazy" />
+        <div class="figure-caption">
+          <strong>Parametric Study &mdash; Thickness</strong>
+          <p>Natural frequency variation with beam thickness.</p>
+        </div>
+      </div>
+
+      <div class="figure-card">
+        <img src="figures/parametric_length.png" alt="Parametric Length Study" loading="lazy" />
+        <div class="figure-caption">
+          <strong>Parametric Study &mdash; Length</strong>
+          <p>Natural frequency variation with beam length.</p>
+        </div>
+      </div>
+
+      <div class="figure-card">
+        <img src="figures/design_space_map.png" alt="Design Space Map" loading="lazy" />
+        <div class="figure-caption">
+          <strong>Design Space Map</strong>
+          <p>Contour map of the first natural frequency across the thickness–length design space.</p>
+        </div>
+      </div>
+
+      <div class="figure-card">
+        <img src="figures/optimization_convergence.png" alt="Optimization Convergence" loading="lazy" />
+        <div class="figure-caption">
+          <strong>Optimization Convergence</strong>
+          <p>Iterative convergence of the design optimization to avoid resonance.</p>
+        </div>
+      </div>
+
+      <div class="figure-card">
+        <img src="figures/time_signal.png" alt="Time-Domain Signal" loading="lazy" />
+        <div class="figure-caption">
+          <strong>Time-Domain Signal</strong>
+          <p>Synthetic vibration response used for FFT-based frequency identification.</p>
+        </div>
+      </div>
+
+      <div class="figure-card">
+        <img src="figures/validation_table.png" alt="Validation Table" loading="lazy" />
+        <div class="figure-caption">
+          <strong>Validation Table</strong>
+          <p>Tabular comparison of all three methods with percentage errors.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <p>
+    Kaan Gokbayrak &mdash; Purdue University &nbsp;|&nbsp;
+    <a href="https://github.com/kaangokbayrak/modal-analysis-resonant-structures" target="_blank" rel="noopener">
+      View on GitHub
+    </a>
+  </p>
+</footer>
+
+</body>
+</html>
