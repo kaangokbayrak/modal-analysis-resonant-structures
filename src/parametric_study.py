@@ -8,13 +8,16 @@ that avoid resonance conditions.
 Author: Kaan Gokbayrak, Purdue University
 """
 
+import logging
 import numpy as np
 from scipy.optimize import minimize, OptimizeResult
 from typing import Dict, Tuple
 import copy
 import csv
-from .beam import Beam
+from .beam import Beam, Material
 from .analytical import AnalyticalSolver
+
+logger = logging.getLogger(__name__)
 
 
 class ParametricStudy:
@@ -350,4 +353,276 @@ class ParametricStudy:
                         row = [val1, val2, results['frequency_map'][i, j], results['mass_map'][i, j]]
                         writer.writerow(row)
         
-        print(f"Results exported to {filepath}")
+        logger.info("Results exported to %s", filepath)
+
+    def optimize_multivariate(self, target_freq: float, params: list,
+                               bounds_dict: dict, n_modes: int = 1) -> dict:
+        """
+        Optimize multiple parameters simultaneously.
+
+        Minimizes total mass subject to the constraint that the first n_modes
+        natural frequencies are all above target_freq.
+
+        Parameters
+        ----------
+        target_freq : float
+            Minimum acceptable natural frequency [Hz]
+        params : list of str
+            Parameters to optimize, e.g. ['thickness', 'width']
+        bounds_dict : dict
+            Mapping param_name -> (min, max)
+        n_modes : int, optional
+            Number of modes that must exceed target_freq (default 1)
+
+        Returns
+        -------
+        dict
+            Keys: 'optimal_values' (dict param->value), 'optimal_frequencies',
+                  'optimal_mass', 'initial_values' (dict), 'initial_frequencies',
+                  'initial_mass', 'optimization_result'
+        """
+        x0 = [getattr(self.base_beam, p) for p in params]
+        initial_values = {p: getattr(self.base_beam, p) for p in params}
+
+        solver_initial = AnalyticalSolver(self.base_beam)
+        initial_frequencies = solver_initial.natural_frequencies(n_modes, self.bc)
+        initial_mass = self.base_beam.total_mass
+
+        def _make_beam(x):
+            beam_copy = copy.deepcopy(self.base_beam)
+            for p, val in zip(params, x):
+                setattr(beam_copy, p, val)
+            return beam_copy
+
+        def objective(x):
+            return _make_beam(x).total_mass
+
+        def constraint_min_freq(x):
+            beam_copy = _make_beam(x)
+            solver = AnalyticalSolver(beam_copy)
+            freqs = solver.natural_frequencies(n_modes, self.bc)
+            return min(freqs[:n_modes]) - target_freq
+
+        bounds = [(bounds_dict[p][0], bounds_dict[p][1]) for p in params]
+        constraints = {'type': 'ineq', 'fun': constraint_min_freq}
+
+        result = minimize(
+            objective,
+            x0,
+            method='SLSQP',
+            bounds=bounds,
+            constraints=constraints,
+            options={'maxiter': 200, 'ftol': 1e-6}
+        )
+
+        optimal_beam = _make_beam(result.x)
+        solver_opt = AnalyticalSolver(optimal_beam)
+        optimal_frequencies = solver_opt.natural_frequencies(n_modes, self.bc)
+        optimal_mass = optimal_beam.total_mass
+        optimal_values = {p: result.x[i] for i, p in enumerate(params)}
+
+        return {
+            'optimal_values': optimal_values,
+            'optimal_frequencies': optimal_frequencies,
+            'optimal_mass': optimal_mass,
+            'initial_values': initial_values,
+            'initial_frequencies': initial_frequencies,
+            'initial_mass': initial_mass,
+            'optimization_result': result
+        }
+
+    def pareto_study(self, param: str, values: np.ndarray,
+                     excitation_freq: float, n_modes: int = 3) -> dict:
+        """
+        Pareto study: mass vs minimum frequency separation from excitation_freq.
+
+        Sweeps param over values and identifies Pareto-optimal points for:
+        - Objective 1: minimize mass
+        - Objective 2: maximize minimum separation = min(|f_n - excitation_freq|) over n_modes
+
+        A point i dominates point j if mass_i <= mass_j AND sep_i >= sep_j
+        (with at least one strict).
+
+        Parameters
+        ----------
+        param : str
+        values : np.ndarray
+        excitation_freq : float
+        n_modes : int, optional
+
+        Returns
+        -------
+        dict
+            Keys: 'values', 'masses', 'min_separations', 'pareto_indices',
+                  'pareto_values', 'pareto_masses', 'pareto_separations'
+        """
+        masses = []
+        separations = []
+
+        for value in values:
+            beam_copy = copy.deepcopy(self.base_beam)
+            setattr(beam_copy, param, value)
+            solver = AnalyticalSolver(beam_copy)
+            freqs = solver.natural_frequencies(n_modes, self.bc)
+            masses.append(beam_copy.total_mass)
+            separations.append(float(np.min(np.abs(freqs - excitation_freq))))
+
+        masses = np.array(masses)
+        separations = np.array(separations)
+
+        n = len(values)
+        is_dominated = np.zeros(n, dtype=bool)
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    if masses[j] <= masses[i] and separations[j] >= separations[i]:
+                        if masses[j] < masses[i] or separations[j] > separations[i]:
+                            is_dominated[i] = True
+                            break
+        pareto_indices = np.where(~is_dominated)[0]
+
+        return {
+            'values': values,
+            'masses': masses,
+            'min_separations': separations,
+            'pareto_indices': pareto_indices,
+            'pareto_values': values[pareto_indices],
+            'pareto_masses': masses[pareto_indices],
+            'pareto_separations': separations[pareto_indices]
+        }
+
+    def optimize_avoid_harmonics(self, excitation_harmonics: list,
+                                  param: str = 'thickness',
+                                  bounds: tuple = (0.001, 0.020),
+                                  separation_hz: float = 10.0) -> dict:
+        """
+        Optimize to keep all natural frequencies away from all harmonics.
+
+        Minimizes mass subject to: for every mode n and harmonic h,
+        |f_n - h| >= separation_hz.
+
+        Parameters
+        ----------
+        excitation_harmonics : list of float
+        param : str
+        bounds : tuple
+        separation_hz : float
+
+        Returns
+        -------
+        dict
+            Keys: 'optimal_value', 'optimal_frequencies', 'optimal_mass',
+                  'initial_frequencies', 'initial_mass', 'optimization_result'
+        """
+        n_modes = max(len(excitation_harmonics), 3)
+
+        initial_value = getattr(self.base_beam, param)
+        solver_initial = AnalyticalSolver(self.base_beam)
+        initial_frequencies = solver_initial.natural_frequencies(n_modes, self.bc)
+        initial_mass = self.base_beam.total_mass
+
+        def get_freqs(x):
+            beam_copy = copy.deepcopy(self.base_beam)
+            setattr(beam_copy, param, x[0])
+            solver = AnalyticalSolver(beam_copy)
+            return solver.natural_frequencies(n_modes, self.bc)
+
+        def objective(x):
+            beam_copy = copy.deepcopy(self.base_beam)
+            setattr(beam_copy, param, x[0])
+            return beam_copy.total_mass
+
+        constraints = []
+        for m in range(n_modes):
+            for h in excitation_harmonics:
+                constraints.append({
+                    'type': 'ineq',
+                    'fun': lambda x, m=m, h=h: (
+                        abs(get_freqs(x)[m] - h) - separation_hz
+                    )
+                })
+
+        result = minimize(
+            objective,
+            [initial_value],
+            method='SLSQP',
+            bounds=[(bounds[0], bounds[1])],
+            constraints=constraints,
+            options={'maxiter': 200, 'ftol': 1e-6}
+        )
+
+        optimal_value = result.x[0]
+        beam_optimal = copy.deepcopy(self.base_beam)
+        setattr(beam_optimal, param, optimal_value)
+        solver_opt = AnalyticalSolver(beam_optimal)
+        optimal_frequencies = solver_opt.natural_frequencies(n_modes, self.bc)
+        optimal_mass = beam_optimal.total_mass
+
+        return {
+            'optimal_value': optimal_value,
+            'optimal_frequencies': optimal_frequencies,
+            'optimal_mass': optimal_mass,
+            'initial_frequencies': initial_frequencies,
+            'initial_mass': initial_mass,
+            'optimization_result': result
+        }
+
+    def optimize_material(self, target_freq: float,
+                          materials_library: list = None,
+                          param: str = 'thickness',
+                          bounds: tuple = (0.001, 0.020)) -> dict:
+        """
+        Select optimal material by trying all materials in library.
+
+        For each material, runs optimize_for_frequency and picks the one
+        with minimum achievable mass while meeting target_freq.
+
+        Parameters
+        ----------
+        target_freq : float
+        materials_library : list of Material, optional
+            Defaults to [steel, aluminum, titanium, carbon_fiber]
+        param : str
+        bounds : tuple
+
+        Returns
+        -------
+        dict
+            Keys: 'best_material', 'best_value', 'best_mass', 'best_frequency',
+                  'results_by_material'
+        """
+        if materials_library is None:
+            materials_library = [
+                Material.steel(),
+                Material.aluminum(),
+                Material.titanium(),
+                Material.carbon_fiber()
+            ]
+
+        results_by_material = {}
+        best_material = None
+        best_value = None
+        best_mass = np.inf
+        best_frequency = None
+
+        for material in materials_library:
+            beam_copy = copy.deepcopy(self.base_beam)
+            beam_copy.material = material
+            study = ParametricStudy(beam_copy, self.bc)
+            result = study.optimize_for_frequency(target_freq, param=param, bounds=bounds)
+            results_by_material[material.name] = result
+
+            if (result['optimal_frequency'] >= target_freq - 0.1
+                    and result['optimal_mass'] < best_mass):
+                best_mass = result['optimal_mass']
+                best_material = material
+                best_value = result['optimal_value']
+                best_frequency = result['optimal_frequency']
+
+        return {
+            'best_material': best_material,
+            'best_value': best_value,
+            'best_mass': best_mass,
+            'best_frequency': best_frequency,
+            'results_by_material': results_by_material
+        }
